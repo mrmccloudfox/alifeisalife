@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 
 import { REPORTED_DETAILS, STORIES } from "./components/staticData";
+import EmailSignup from "./components/EmailSignup";
 // Temporarily removed for section simplification
 // import SupportBoard from "./components/SupportBoard";
 // import TShirtCustomizer from "./components/TShirtCustomizer";
@@ -224,6 +225,12 @@ export default function App() {
                 </div>
               </div>
             </div>
+          </div>
+        </section>
+
+        <section className="border-t border-white/8 bg-[#111614] py-12 md:py-16">
+          <div className="mx-auto max-w-[1050px] px-5">
+            <EmailSignup />
           </div>
         </section>
 

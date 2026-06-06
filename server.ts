@@ -2,6 +2,8 @@ import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Modality } from "@google/genai";
+import { createClient } from "@supabase/supabase-js";
+import WebSocket from "ws";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -10,6 +12,85 @@ const app = express();
 const PORT = Number(process.env.PORT || 3000);
 
 app.use(express.json());
+
+// Initialize Supabase client for server-side operations
+const supabaseUrl = process.env.VITE_SUPABASE_URL;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+let supabase: ReturnType<typeof createClient> | null = null;
+
+if (supabaseUrl && supabaseServiceKey) {
+  supabase = createClient(supabaseUrl, supabaseServiceKey, {
+    realtime: {
+      transport: WebSocket
+    }
+  });
+} else {
+  console.warn("Supabase credentials not found. Email signup features will be disabled.");
+}
+
+// Rate limiting store for email signups (in-memory, resets on restart)
+const emailSignupAttempts = new Map<string, { count: number; resetTime: number }>();
+const MAX_SIGNUP_ATTEMPTS = 3;
+const RATE_LIMIT_WINDOW = 60 * 60 * 1000; // 1 hour in milliseconds
+
+// Helper function to check rate limiting
+const checkRateLimit = (ip: string): { allowed: boolean; resetTime?: number } => {
+  const now = Date.now();
+  const attempts = emailSignupAttempts.get(ip);
+
+  if (!attempts) {
+    emailSignupAttempts.set(ip, { count: 1, resetTime: now + RATE_LIMIT_WINDOW });
+    return { allowed: true };
+  }
+
+  if (now > attempts.resetTime) {
+    emailSignupAttempts.set(ip, { count: 1, resetTime: now + RATE_LIMIT_WINDOW });
+    return { allowed: true };
+  }
+
+  if (attempts.count >= MAX_SIGNUP_ATTEMPTS) {
+    return { allowed: false, resetTime: attempts.resetTime };
+  }
+
+  attempts.count++;
+  return { allowed: true };
+};
+
+// Helper function to validate email signup data
+const validateEmailSignup = (data: any): { valid: boolean; errors: string[] } => {
+  const errors: string[] = [];
+
+  if (!data.firstName || typeof data.firstName !== 'string') {
+    errors.push("First name is required");
+  } else if (data.firstName.length < 2 || data.firstName.length > 50) {
+    errors.push("First name must be between 2 and 50 characters");
+  } else if (!/^[a-zA-Z\s\-']+$/.test(data.firstName)) {
+    errors.push("First name can only contain letters, spaces, hyphens, and apostrophes");
+  }
+
+  if (!data.lastName || typeof data.lastName !== 'string') {
+    errors.push("Last name is required");
+  } else if (data.lastName.length < 2 || data.lastName.length > 50) {
+    errors.push("Last name must be between 2 and 50 characters");
+  } else if (!/^[a-zA-Z\s\-']+$/.test(data.lastName)) {
+    errors.push("Last name can only contain letters, spaces, hyphens, and apostrophes");
+  }
+
+  if (!data.email || typeof data.email !== 'string') {
+    errors.push("Email is required");
+  } else if (data.email.length > 254) {
+    errors.push("Email address is too long");
+  } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) {
+    errors.push("Please enter a valid email address");
+  }
+
+  if (data.agreedToTerms !== true) {
+    errors.push("You must agree to the terms and privacy policy");
+  }
+
+  return { valid: errors.length === 0, errors };
+};
 
 // In-memory store for support messages which resets on restart
 const supportMessages = [
@@ -85,6 +166,193 @@ app.post("/api/messages", (req, res) => {
 
   supportMessages.unshift(newMessage);
   res.status(201).json(newMessage);
+});
+
+// Email Signup Endpoints
+app.post("/api/email-signup", async (req, res) => {
+  if (!supabase) {
+    return res.status(503).json({
+      error: "Email signup service is currently unavailable. Supabase not configured."
+    });
+  }
+
+  const clientIP = req.ip || req.connection.remoteAddress || 'unknown';
+
+  // Check rate limiting
+  const rateLimitCheck = checkRateLimit(clientIP);
+  if (!rateLimitCheck.allowed) {
+    const resetTime = rateLimitCheck.resetTime || Date.now();
+    const minutesUntilReset = Math.ceil((resetTime - Date.now()) / (1000 * 60));
+    return res.status(429).json({
+      error: `Too many signup attempts. Please try again in ${minutesUntilReset} minutes.`
+    });
+  }
+
+  // Validate request data
+  const validation = validateEmailSignup(req.body);
+  if (!validation.valid) {
+    return res.status(400).json({
+      error: "Validation failed",
+      details: validation.errors
+    });
+  }
+
+  const { firstName, lastName, email, agreedToTerms } = req.body;
+
+  try {
+    // Insert into Supabase
+    const { data, error } = await supabase
+      .from('email_signups')
+      .insert([
+        {
+          first_name: firstName.trim(),
+          last_name: lastName.trim(),
+          email: email.trim().toLowerCase(),
+          agreed_to_terms: agreedToTerms,
+          source: 'newsletter'
+        }
+      ])
+      .select()
+      .single();
+
+    if (error) {
+      if (error.code === '23505') { // Unique violation
+        return res.status(409).json({
+          error: "This email address is already subscribed to our newsletter."
+        });
+      }
+      throw error;
+    }
+
+    return res.status(201).json({
+      id: data.id,
+      message: "Successfully subscribed!",
+      email: data.email
+    });
+
+  } catch (error: any) {
+    console.error("Email signup error:", error);
+    return res.status(500).json({
+      error: "An error occurred while processing your signup. Please try again."
+    });
+  }
+});
+
+// Admin endpoint to view all email signups
+app.get("/api/admin/signups", async (req, res) => {
+  if (!supabase) {
+    return res.status(503).json({
+      error: "Email signup service is currently unavailable. Supabase not configured."
+    });
+  }
+
+  try {
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit = Math.min(100, Math.max(10, parseInt(req.query.limit as string) || 50));
+    const offset = (page - 1) * limit;
+
+    const { data, error, count } = await supabase
+      .from('email_signups')
+      .select('*', { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (error) throw error;
+
+    return res.json({
+      signups: data || [],
+      total: count || 0,
+      page,
+      limit,
+      totalPages: Math.ceil((count || 0) / limit)
+    });
+
+  } catch (error: any) {
+    console.error("Admin signups fetch error:", error);
+    return res.status(500).json({
+      error: "Failed to retrieve email signups."
+    });
+  }
+});
+
+// Admin endpoint to export signups as CSV
+app.get("/api/admin/signups/export", async (req, res) => {
+  if (!supabase) {
+    return res.status(503).json({
+      error: "Email signup service is currently unavailable. Supabase not configured."
+    });
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('email_signups')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+
+    // Generate CSV content
+    const headers = ['ID', 'First Name', 'Last Name', 'Email', 'Agreed to Terms', 'Date Signed Up', 'Source'];
+    const csvRows = [headers.join(',')];
+
+    (data || []).forEach(signup => {
+      const row = [
+        signup.id,
+        `"${signup.first_name}"`,
+        `"${signup.last_name}"`,
+        signup.email,
+        signup.agreed_to_terms ? 'Yes' : 'No',
+        new Date(signup.created_at).toLocaleDateString(),
+        signup.source || 'newsletter'
+      ];
+      csvRows.push(row.join(','));
+    });
+
+    const csvContent = csvRows.join('\n');
+    const filename = `email-signups-${new Date().toISOString().split('T')[0]}.csv`;
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.send(csvContent);
+
+  } catch (error: any) {
+    console.error("CSV export error:", error);
+    return res.status(500).json({
+      error: "Failed to export email signups."
+    });
+  }
+});
+
+// Admin endpoint to manually unsubscribe an email
+app.delete("/api/admin/signups/:id", async (req, res) => {
+  if (!supabase) {
+    return res.status(503).json({
+      error: "Email signup service is currently unavailable. Supabase not configured."
+    });
+  }
+
+  const { id } = req.params;
+
+  if (!id) {
+    return res.status(400).json({ error: "Signup ID is required." });
+  }
+
+  try {
+    const { error } = await supabase
+      .from('email_signups')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
+
+    return res.json({ message: "Email removed successfully" });
+
+  } catch (error: any) {
+    console.error("Delete signup error:", error);
+    return res.status(500).json({
+      error: "Failed to remove email signup."
+    });
+  }
 });
 
 // Real-time TTS Recitation using Google Gemini

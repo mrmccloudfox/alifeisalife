@@ -36,3 +36,26 @@ export interface ShirtDetail {
   color: "Black" | "Vintage White" | "Charcoal";
   quantity: number;
 }
+
+export interface EmailSignupData {
+  id: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  agreed_to_terms: boolean;
+  created_at: string;
+  source: string;
+}
+
+export interface EmailSignupRequest {
+  firstName: string;
+  lastName: string;
+  email: string;
+  agreedToTerms: boolean;
+}
+
+export interface EmailSignupResponse {
+  id: string;
+  message: string;
+  email: string;
+}
