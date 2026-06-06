@@ -9,7 +9,14 @@ if (supabaseUrl && supabaseServiceKey) {
   supabase = createClient(supabaseUrl, supabaseServiceKey);
 }
 
+// DISABLED: Admin endpoint removed for security - contains sensitive personal information
 export default async function handler(req, res) {
+  return res.status(404).json({ error: "Endpoint disabled for security" });
+}
+
+/*
+// ORIGINAL FUNCTION COMMENTED OUT FOR SECURITY
+export default async function handler_DISABLED(req, res) {
   // Set CORS headers
   res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -90,3 +97,4 @@ export default async function handler(req, res) {
 
   return res.status(405).json({ error: 'Method not allowed' });
 }
+*/
