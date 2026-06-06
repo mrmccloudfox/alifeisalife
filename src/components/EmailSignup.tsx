@@ -94,7 +94,7 @@ export default function EmailSignup() {
           Get updates on shirt availability and news
         </h3>
         <p className="mt-4 text-sm leading-relaxed text-[#afa596]">
-          Be the first to know when shirts are available and get updates about Hope House Colorado.
+          Be the first to know when shirts are available and get the latest updates.
         </p>
       </div>
 
@@ -110,7 +110,7 @@ export default function EmailSignup() {
             <CheckCircle className="mx-auto mb-3 h-12 w-12 text-green-400" />
             <h4 className="text-xl font-black text-[#f6ead6]">Welcome to our community!</h4>
             <p className="mt-2 text-sm text-[#c8bdaa]">
-              Thank you for signing up. You'll receive updates about shirt availability and Hope House Colorado news.
+              Thank you for signing up. You'll receive updates about shirt availability and campaign news.
             </p>
             <div className="mt-4 flex items-center justify-center gap-1 text-xs text-green-400">
               <Heart className="h-3 w-3" />
@@ -185,7 +185,7 @@ export default function EmailSignup() {
                   disabled={isSubmitting}
                 />
                 <label htmlFor="terms-checkbox" className="text-xs leading-relaxed text-[#c8bdaa]">
-                  By signing up, I agree to receive marketing emails about shirt availability and Hope House Colorado news.
+                  By signing up, I agree to receive marketing emails about shirt availability and campaign updates.
                   I understand I can unsubscribe at any time. This information will be used solely for campaign updates and supporter communication.
                 </label>
               </div>
